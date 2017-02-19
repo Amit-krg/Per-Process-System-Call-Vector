@@ -1,0 +1,188 @@
+Group:10
+_______________
+
+Team-Members:
+1.Amit Gupta (110900982)
+2.Farhaan Jalia()
+3.Himkalyan Bardoloi()
+4.Kanishta Agrawal()
+
+|About|:
+------
+The files present in this project(/usr/src/hw3-cse506p10) consists of source-code to allow user to load custom system call vectors for a process which can alter or restrict certain functionality.
+The vectors can then be passed to child process using a flag in the clone syscall. It alse includes a clone2 system call which can be used instead of the clone syscall when a vectorother than the parent's needs to be assigned to a child process.
+Two sample modules (hw3/test_mod and hw3/test_mod2) are included to show how syscall vectors can be generated separately and inserted into the kernel without compiling the kernel.
+
+
+ -------------
+|Source files |
+--------------
+
+Below are the details of the source code files modified or added to the project:
+
+User Space: /usr/src/hw3-cse506p10/hw3
+
+1.vrctl/vrctl.c : Consisits of code to control the association of the vector with a process and to read currently associated 	vector with a process.
+2.vrctl/Makefile : to compile userspace ioctl code
+2.vrctl_test.sh : Test script to check assignment of vectors to test process using ioctl.
+3.test.c: A testing sccript to check the association of a vector with a process
+4.test.sh: Test script to check whether the vectors are assigned to processes and are behaving as expected.
+5.clone2/clone_test2.c(clone2/): Consissts of code to check modified clone process
+6.clone2/dwarf2.h : header copied from glibc
+7.clone2/clone2.S : Modified clone2.S of glibc to as to fit one more parameters in clone2
+8.clone2/sysdep-generic.h : header copied from glibc
+9.clone2/sysdep.h : header copied from glibc
+10.clone2/clone2.h : header
+11.clone2/ __syscall_error.c : copied from glibc
+12.clone2/Makefile : to compile clone2
+
+
+Kernel Space: /usr/src/hw3-cse506p10/
+
+Several files from the kernel space has been modified & added to implement the per process syscall vectors
+
+Kernel-modules:(/usr/src/hw3-cse506p10)
+
+1) test_mod/test_mod.c : kernel module to insert a vector (vector number 1). Process is allowed to create files/folders only if it is being run by root and noone is allowed to delete files/folders.
+2) test_mod2/test_mod2.c : kernel module to insert a vector (vector number 2). Source code files (.c,.cpp,.pl) files are not allowed to be read by the process
+
+Added:
+
+1)add_del_vector.c  : Helper functions to register/deregister vectors,  get vector from list etc.
+
+Header files
+2)include/linux/add_del_vector.h
+
+Modified
+
+1)kernel/fork.c : Added _do_fork2 to handle clone2 syscall and modified _do_fork to handle extra flag in clone syscall
+2)fs/open.c : modified open, creat and close syscalls to read vector and redirect/block/allow the syscall
+3)fs/namei.c :  modified mkdir, rmdir, rename, symlink, link and unlink syscalls to read vector and redirect/block/allow the syscall
+4)fs/read_write.c:  modified read and write syscalls to read vector and redirect/block/allow the syscall
+5)kernel/exit.c: Modified code such that when any process exits, rc count of used vector module is decreased.
+6)fs/ioctl.c: Modified code to support 3 command (set vector for process, display vector used for process and display vector and no. pf processeds using the vector)
+7)arch/x86/entry/syscalls/syscall_64.tbl: Added entry for clone2 syscall
+
+Header files
+8)fs/fs.h
+9)include/linux/sched.h
+10)include/uapi/linux/sched.h
+11)include/linux/syscalls.h
+
+
+ -------------
+| Executables |
+ -------------
+Executing "make" in /usr/src/hw2-cse506p10/test_mod/test_mod and /usr/src/hw2-cse506p10/test_mod2/test_mod2 will produce test_mod.ko and test_mod2.ko respectively and several other object file.
+
+1.test_mod.ko
+2.test_mod2.ko
+3.clone2.ko
+
+  -------------------------------------------------------------
+| Steps to be followed for compiling and executing this project |
+  -------------------------------------------------------------
+1) Check-out the repository from GIT. Navigate to the checked-out path.
+2) Either copy kernel.config present in this directory to .config in kernel (or) use "make" by specifying config file.
+3) Run "make modules_install".
+4) Run "make install".
+5) Reboot the kernel and login to the new kernel.
+7) Navigate to the test_mod/test_mod or test_mod2/test_mod2 and run make to generate loadable kernel module test_mod.ko and test_mod2.ko to be inserted into the kernel
+8) Inserting the above module will make two syscall vector available to user to choose from for a process.User can associate these vectors to any of the process using the ioctl command.
+
+
+
+ -------------------------------
+| Executing the user-application|
+ -------------------------------
+
+vrctl:
+
+ After inserting the syscall vector into the kernel, use the vrctl to assign a vector to a process.
+./vrctl <pid> <vector_id>
+
+pid: Process id of the process to which vector has to be associated
+vector_id: Vector id of the vector to be associate with the above process
+
+If no parameter is specified it will return list of vector with their respective referece count.
+
+We have automated this process using "vrctl_test.sh" which will assign above two vectors to the process "test".
+
+
+
+Design & Implementation:
+________________________
+
+Locking semantics:
+
+In order to handle race conditions we have introduced locking at two places :
+
+1 - When someone tries to add or remove a vector :
+If multiple users try to add/remove vectors at the same time it will result in a race condition. To handle this we added a mute
+x lock. Whenever an process tries to add or remove a vector to/from the linked list, it must first take that lock, modify the linked list and then release the lock. This ensures that multiple processes do not modify the linked list at the same time.
+
+2 - When a process tries to access task_struct->sys_call_vec :
+When a system call is invoked, the sys_call_vec in the calling process's task_struct is checked. If, at the same time someone r
+uns the ioctl to change the vector of that process, it can result in a race condition. To prevent this, we added a spinlock to
+the task_struct structure. Whenever a process tries to access sys_call_vec of task_struct it must take this lock, then read/wri
+te the sys_call_vec field and then release the lock.
+
+
+Vectors:
+
+To keep track of the inserted vectors, we have created a linkedlist which can be accessed from the globally available "head". As soon as a module is loaded in the kernel, register_vector attaches the associated vector at the end of the linked list.
+Now when a vector id is provided for a process using ioctl, our ioctl code links the sys_call_vec under task_struct to that particular vector.
+
+
+Syscalls:
+
+In our implementation ,we are intercepting the syscalls inside the actual handler of the system call. We initially check if the currently executing process has any vector associated with it.If yes, we execute the function pointed to by the vector.In our current implementation we have modified few sample syscall calls(mkdir,rmdir,symlink,link,unlink,rename,open,read,write,close,creat) for the demo purpose.
+
+Following is the description of custom vectors:
+
+1.vector 1(hw3/test_mod) : This lodable kernel module contains vector which  has modified versions of link,rename,symlink,open and mkdir.In all of this syscall we have restricted the functionality to root user
+
+2.vector 2(hw3/test_mod2) : This lodable kernel module contains vector which has modified versions of creat and read. Here read will prevent reading files which contains source code, such as file with .c,.pl etc extension)
+
+
+clone() with CLONE_INHERIT_VECTOR flag :
+
+We defined a new clone flag called CLONE_INHERIT_VECTOR.
+We then added handling for this flag in the do_fork() function in kernel/fork.c.
+In this function, by default the task_struct of the parent is copied to the child.
+So if CLONE_INHERIT_VECTOR is passed, no extra handling is required.
+However, if this flag is not passed, we set the vector pointer for the child to NULL. So, the child process uses the default system calls.
+
+
+clone2() :
+
+For this we defined a new system call in kernel/fork.c. This "clone2" system call takes an extra argument(vector id).
+We also created a new function do_fork2() which is called by clone2(). do_fork2() does all the same things as do_fork(). In addition it also assigns the corresponding vector to the child process.
+In addition to this we have added a wrapper in assembly language. We took the code for clone() in glibc and modified it for clone2().
+The interface exposed to user processes is :
+int clone2(void *fn, void *child_stack, int flags, void *arg, int vector_id,
+                 .../* pid_t ptid, void *newtls, pid_t *ctid/);
+This function is implemented in assembly in hw3/clone2/clone2.S.
+The arguments are moved to the registers as expected by the kernel and the clone2 system call is invoked.
+The kernel code creates a new process.
+Back in the assembly code, for the child process, we transfer control to the function passed in the first argument of clone2().
+
+Ioctl :
+
+ioctl supports three operations :-
+
+1.input ./vrctl <pid> <vector_id> Associates the specified vector with the process specified. Looks through the linked list of vectors for the specfied vectorId, and populates the vector field in task_strcut of the process with the address of vector.Uses fucntions in add_del_vector to get vector information.
+2.input ./vrctl <pid>. Gets the associated vectorId with process through process task_struct.
+3.inpu ./vrctl . Outputs the list of all vectors along with count of processes using them. Two ioctls. First Scans through the linked list to get the size of list. Sends the list size to user. User allocates appropriate memory and issues second ioctl with argument as malloced memory. Now we scan through linked list of vectors to retrieve all vectors.
+
+
+
+Reference:
+-----------
+1. IOCTL:
+  a. http://docs.blackfin.uclinux.org/doku.php?id=linux-kernel:ioctls#ioctl_example_code
+
+2. http://www.fsl.cs.sunysb.edu/project-list.html
+3. http://www.tldp.org/LDP/lki/lki-3.html
+4. sysdeps/unix/sysv/linux/x86-64/clone.S
+
